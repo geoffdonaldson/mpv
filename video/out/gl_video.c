@@ -145,6 +145,8 @@ struct gl_video {
 
     int depth_g;
 
+    GLenum gl_target; // texture target (GL_TEXTURE_2D, ...) for video and FBOs
+
     GLuint vertex_buffer;
     GLuint vao;
 
@@ -419,17 +421,19 @@ static void write_quad(struct vertex *va,
                        float x0, float y0, float x1, float y1,
                        float tx0, float ty0, float tx1, float ty1,
                        float texture_w, float texture_h,
-                       const uint8_t color[4], bool flip)
+                       const uint8_t color[4], GLenum target, bool flip)
 {
     static const uint8_t white[4] = { 255, 255, 255, 255 };
 
     if (!color)
         color = white;
 
-    tx0 /= texture_w;
-    ty0 /= texture_h;
-    tx1 /= texture_w;
-    ty1 /= texture_h;
+    if (target == GL_TEXTURE_2D) {
+        tx0 /= texture_w;
+        ty0 /= texture_h;
+        tx1 /= texture_w;
+        ty1 /= texture_h;
+    }
 
     if (flip) {
         float tmp = ty0;
@@ -470,14 +474,14 @@ static bool fbotex_init(struct gl_video *p, struct fbotex *fbo, int w, int h,
 
     gl->GenFramebuffers(1, &fbo->fbo);
     gl->GenTextures(1, &fbo->texture);
-    gl->BindTexture(GL_TEXTURE_2D, fbo->texture);
-    gl->TexImage2D(GL_TEXTURE_2D, 0, iformat,
+    gl->BindTexture(p->gl_target, fbo->texture);
+    gl->TexImage2D(p->gl_target, 0, iformat,
                    fbo->tex_w, fbo->tex_h, 0,
                    GL_RGB, GL_UNSIGNED_BYTE, NULL);
-    default_tex_params(gl, GL_TEXTURE_2D, GL_LINEAR);
+    default_tex_params(gl, p->gl_target, GL_LINEAR);
     gl->BindFramebuffer(GL_FRAMEBUFFER, fbo->fbo);
     gl->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                             GL_TEXTURE_2D, fbo->texture, 0);
+                             p->gl_target, fbo->texture, 0);
 
     if (gl->CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         MP_ERR(p, "Error: framebuffer completeness check failed!\n");
@@ -567,8 +571,26 @@ static void update_uniforms(struct gl_video *p, GLuint program)
         snprintf(textures_size_n, sizeof(textures_size_n), "textures_size[%d]", n);
 
         gl->Uniform1i(gl->GetUniformLocation(program, textures_n), n);
-        gl->Uniform2f(gl->GetUniformLocation(program, textures_size_n),
-                      p->image.planes[n].tex_w, p->image.planes[n].tex_h);
+        if (p->gl_target == GL_TEXTURE_2D) {
+            gl->Uniform2f(gl->GetUniformLocation(program, textures_size_n),
+                          p->image.planes[n].tex_w, p->image.planes[n].tex_h);
+        } else {
+            // Makes the pixel size calculation code think they are 1x1
+            gl->Uniform2f(gl->GetUniformLocation(program, textures_size_n), 1, 1);
+        }
+    }
+
+    loc = gl->GetUniformLocation(program, "chroma_div");
+    if (loc >= 0) {
+        if (p->gl_target == GL_TEXTURE_2D) {
+            // Texture coordinates are [0,1], and chroma plane coordinates are
+            // magically rescaled.
+            gl->Uniform2f(loc, 1, 1);
+        } else {
+            int xs = p->image_desc.chroma_xs;
+            int ys = p->image_desc.chroma_ys;
+            gl->Uniform2f(loc, 1.0 / (1 << xs), 1.0 / (1 << ys));
+        }
     }
 
     loc = gl->GetUniformLocation(program, "chroma_center_offset");
@@ -797,6 +819,14 @@ static void compile_shaders(struct gl_video *p)
 
     char *header = talloc_asprintf(tmp, "#version %d\n%s%s", gl->glsl_version,
                                    shader_prelude, PRELUDE_END);
+
+    if (p->gl_target == GL_TEXTURE_RECTANGLE) {
+        shader_def(&header, "VIDEO_SAMPLER", "sampler2DRect");
+        //header = talloc_asprintf_append(header,
+        //                    "#extension GL_ARB_texture_rectangle : enable\n");
+    } else {
+        shader_def(&header, "VIDEO_SAMPLER", "sampler2D");
+    }
 
     // Need to pass alpha through the whole chain. (Not needed for OSD shaders.)
     if (p->opts.alpha_mode == 1)
@@ -1106,6 +1136,7 @@ static void recreate_osd(struct gl_video *p)
     if (p->osd)
         mpgl_osd_destroy(p->osd);
     p->osd = mpgl_osd_init(p->gl, p->log, false);
+    p->osd->gl_target = p->gl_target;
     p->osd->use_pbo = p->opts.pbo;
 }
 
@@ -1218,7 +1249,7 @@ static void set_image_textures(struct gl_video *p, struct video_image *vimg,
 
     for (int n = 0; n < 4; n++) {
         gl->ActiveTexture(GL_TEXTURE0 + n);
-        gl->BindTexture(GL_TEXTURE_2D, imgtex[n]);
+        gl->BindTexture(p->gl_target, imgtex[n]);
     }
     gl->ActiveTexture(GL_TEXTURE0);
 }
@@ -1229,7 +1260,7 @@ static void unset_image_textures(struct gl_video *p)
 
     for (int n = 0; n < 4; n++) {
         gl->ActiveTexture(GL_TEXTURE0 + n);
-        gl->BindTexture(GL_TEXTURE_2D, 0);
+        gl->BindTexture(p->gl_target, 0);
     }
     gl->ActiveTexture(GL_TEXTURE0);
 
@@ -1295,13 +1326,13 @@ static void init_video(struct gl_video *p, const struct mp_image_params *params)
 
             gl->ActiveTexture(GL_TEXTURE0 + n);
             gl->GenTextures(1, &plane->gl_texture);
-            gl->BindTexture(GL_TEXTURE_2D, plane->gl_texture);
+            gl->BindTexture(p->gl_target, plane->gl_texture);
 
-            gl->TexImage2D(GL_TEXTURE_2D, 0, plane->gl_internal_format,
+            gl->TexImage2D(p->gl_target, 0, plane->gl_internal_format,
                            plane->tex_w, plane->tex_h, 0,
                            plane->gl_format, plane->gl_type, NULL);
 
-            default_tex_params(gl, GL_TEXTURE_2D, GL_LINEAR);
+            default_tex_params(gl, p->gl_target, GL_LINEAR);
         }
 
         MP_VERBOSE(p, "Texture for plane %d: %dx%d\n",
@@ -1377,7 +1408,7 @@ static void render_to_fbo(struct gl_video *p, struct fbotex *fbo,
     write_quad(vb, -1, -1, 1, 1,
                x, y, x + w, y + h,
                tex_w, tex_h,
-               NULL, false);
+               NULL, p->gl_target, false);
     draw_triangles(p, vb, VERTICES_PER_QUAD);
 
     gl->BindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1394,7 +1425,7 @@ static void handle_pass(struct gl_video *p, struct fbotex *chain,
     if (!program)
         return;
 
-    gl->BindTexture(GL_TEXTURE_2D, chain->texture);
+    gl->BindTexture(p->gl_target, chain->texture);
     gl->UseProgram(program);
     render_to_fbo(p, fbo, chain->vp_x, chain->vp_y,
                   chain->vp_w, chain->vp_h,
@@ -1448,7 +1479,7 @@ void gl_video_render_frame(struct gl_video *p)
 
     handle_pass(p, &chain, &p->scale_sep_fbo, p->scale_sep_program);
 
-    gl->BindTexture(GL_TEXTURE_2D, chain.texture);
+    gl->BindTexture(p->gl_target, chain.texture);
     gl->UseProgram(p->final_program);
 
     struct mp_rect src = {p->src_rect.x0, chain.vp_y,
@@ -1468,7 +1499,7 @@ void gl_video_render_frame(struct gl_video *p)
                    src.x0 / 2, src.y0,
                    src.x0 / 2 + w / 2, src.y1,
                    src_texw, src_texh,
-                   NULL, is_flipped);
+                   NULL, p->gl_target, is_flipped);
         draw_triangles(p, vb, VERTICES_PER_QUAD);
 
         glEnable3DRight(gl, p->opts.stereo_mode);
@@ -1479,7 +1510,7 @@ void gl_video_render_frame(struct gl_video *p)
                    src.x0 / 2 + imgw / 2, src.y0,
                    src.x0 / 2 + imgw / 2 + w / 2, src.y1,
                    src_texw, src_texh,
-                   NULL, is_flipped);
+                   NULL, p->gl_target, is_flipped);
         draw_triangles(p, vb, VERTICES_PER_QUAD);
 
         glDisable3D(gl, p->opts.stereo_mode);
@@ -1490,7 +1521,7 @@ void gl_video_render_frame(struct gl_video *p)
                    src.x0, src.y0,
                    src.x1, src.y1,
                    src_texw, src_texh,
-                   NULL, is_flipped);
+                   NULL, p->gl_target, is_flipped);
         draw_triangles(p, vb, VERTICES_PER_QUAD);
     }
 
@@ -1644,8 +1675,8 @@ void gl_video_upload_image(struct gl_video *p, struct mp_image *mpi)
             plane_ptr = NULL; // PBO offset 0
         }
         gl->ActiveTexture(GL_TEXTURE0 + n);
-        gl->BindTexture(GL_TEXTURE_2D, plane->gl_texture);
-        glUploadTex(gl, GL_TEXTURE_2D, plane->gl_format, plane->gl_type,
+        gl->BindTexture(p->gl_target, plane->gl_texture);
+        glUploadTex(gl, p->gl_target, plane->gl_format, plane->gl_type,
                     plane_ptr, mpi->stride[n], 0, 0, plane->w, plane->h, 0);
     }
     gl->ActiveTexture(GL_TEXTURE0);
@@ -1674,7 +1705,7 @@ struct mp_image *gl_video_download_image(struct gl_video *p)
     for (int n = 0; n < p->plane_count; n++) {
         struct texplane *plane = &vimg->planes[n];
         gl->ActiveTexture(GL_TEXTURE0 + n);
-        glDownloadTex(gl, GL_TEXTURE_2D, plane->gl_format, plane->gl_type,
+        glDownloadTex(gl, p->gl_target, plane->gl_format, plane->gl_type,
                       image->planes[n], image->stride[n]);
     }
     mp_image_set_attributes(image, &p->image_params);
@@ -1711,7 +1742,7 @@ static void draw_osd_cb(void *ctx, struct mpgl_osd_part *osd,
             write_quad(&va[osd->num_vertices],
                     b->x, b->y, b->x + b->dw, b->y + b->dh,
                     pos.x, pos.y, pos.x + b->w, pos.y + b->h,
-                    osd->w, osd->h, color, false);
+                    osd->w, osd->h, color, p->gl_target, false);
             osd->num_vertices += VERTICES_PER_QUAD;
         }
     }
@@ -2084,8 +2115,8 @@ struct gl_video *gl_video_init(GL *gl, struct mp_log *log)
         .gl = gl,
         .log = log,
         .opts = gl_video_opts_def,
+        .gl_target = GL_TEXTURE_RECTANGLE,
         .gl_debug = true,
-        .colorspace = MP_CSP_DETAILS_DEFAULTS,
         .scalers = {
             { .index = 0, .name = "bilinear" },
             { .index = 1, .name = "bilinear" },

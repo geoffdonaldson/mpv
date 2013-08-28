@@ -178,6 +178,9 @@ struct gl_hwdec {
     // internal representation in gl_video.c as the hardware texture.
     // It's used to build the rendering chain, and also as screenshot format.
     int converted_imgfmt;
+    // (for now) set by vo_opengl.c
+    // GL_TEXTURE_2D or GL_TEXTURE_RECTANGLE
+    GLenum gl_texture_target;
 };
 
 struct gl_hwdec_driver {

@@ -92,16 +92,16 @@ static int reinit(struct gl_hwdec *hw, const struct mp_image_params *params)
     destroy_texture(hw);
 
     gl->GenTextures(1, &p->gl_texture);
-    gl->BindTexture(GL_TEXTURE_2D, p->gl_texture);
-    gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    gl->TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, params->w, params->h, 0,
+    gl->BindTexture(hw->gl_texture_target, p->gl_texture);
+    gl->TexParameteri(hw->gl_texture_target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    gl->TexParameteri(hw->gl_texture_target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    gl->TexParameteri(hw->gl_texture_target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    gl->TexParameteri(hw->gl_texture_target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    gl->TexImage2D(hw->gl_texture_target, 0, GL_RGBA, params->w, params->h, 0,
                    GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    gl->BindTexture(GL_TEXTURE_2D, 0);
+    gl->BindTexture(hw->gl_texture_target, 0);
 
-    status = vaCreateSurfaceGLX(p->display, GL_TEXTURE_2D,
+    status = vaCreateSurfaceGLX(p->display, hw->gl_texture_target,
                                 p->gl_texture, &p->vaglx_surface);
     return check_va_status(status, "vaCreateSurfaceGLX()") ? 0 : -1;
 }
