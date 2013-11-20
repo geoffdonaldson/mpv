@@ -604,6 +604,7 @@ struct demuxer *demux_open(struct stream *stream, char *force_format,
 
 void demux_flush(demuxer_t *demuxer)
 {
+    demux_control(demuxer, DEMUXER_CTRL_FLUSH, NULL);
     for (int n = 0; n < demuxer->num_streams; n++)
         ds_free_packs(demuxer->streams[n]->ds);
     demuxer->warned_queue_overflow = false;
