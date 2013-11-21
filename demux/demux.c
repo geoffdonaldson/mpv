@@ -350,7 +350,7 @@ overflow:
 //     0 = EOF or no stream found or invalid type
 //     1 = successfully read a packet
 
-static int demux_fill_buffer(demuxer_t *demux)
+int demux_fill_buffer(demuxer_t *demux)
 {
     return demux->desc->fill_buffer ? demux->desc->fill_buffer(demux) : 0;
 }
@@ -360,6 +360,10 @@ static void ds_get_packets(struct sh_stream *sh)
     demuxer_t *demux = sh->demuxer;
     mp_dbg(MSGT_DEMUXER, MSGL_DBG3, "ds_get_packets (%s) called\n",
            stream_type_name(sh->type));
+
+    // This pulls in new stream headers if the thread_wrapper is used.
+    demux_control(demux, DEMUXER_CTRL_UPDATE_INFO, NULL);
+
     while (1) {
         if (!packet_queue_is_empty(sh->pq))
             return;
@@ -370,6 +374,7 @@ static void ds_get_packets(struct sh_stream *sh)
         if (!demux_fill_buffer(demux))
             break; // EOF
     }
+
     mp_msg(MSGT_DEMUXER, MSGL_V, "ds_get_packets: EOF reached (stream: %s)\n",
            stream_type_name(sh->type));
     packet_queue_set_eof(sh->pq, true);
@@ -750,6 +755,8 @@ void demuxer_select_track(struct demuxer *demuxer, struct sh_stream *stream,
 void demuxer_enable_autoselect(struct demuxer *demuxer)
 {
     demuxer->stream_autoselect = true;
+    // Make sure the thread wrapper gets notice of this.
+    demux_control(demuxer, DEMUXER_CTRL_SWITCHED_TRACKS, NULL);
 }
 
 bool demuxer_stream_is_selected(struct demuxer *d, struct sh_stream *stream)

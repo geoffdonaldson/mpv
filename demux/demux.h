@@ -237,6 +237,10 @@ struct sh_stream *new_sh_stream(struct demuxer *demuxer, enum stream_type type);
 struct demuxer *demux_open(struct stream *stream, char *force_format,
                            struct demuxer_params *params, struct MPOpts *opts);
 
+// Functions used by thread_wrapper.c
+struct demuxer *demux_create_thread_wrapper(struct demuxer *demuxer);
+int demux_fill_buffer(demuxer_t *demux);
+
 void demux_flush(struct demuxer *demuxer);
 int demux_seek(struct demuxer *demuxer, float rel_seek_secs, int flags);
 
