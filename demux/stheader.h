@@ -69,8 +69,11 @@ struct sh_stream {
     // shouldn't exist type of stuff
     struct MPOpts *opts;
 
+    // You can read this, but for setting use demuxer_select_track()
+    bool selected;              // user wants packets from this stream
+
     // Internal to demux.c
-    struct demux_stream *ds;
+    struct packet_queue *pq;    // packet FIFO (use demux_ functions to access)
 };
 
 #define SH_COMMON                                                       \
