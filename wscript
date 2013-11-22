@@ -447,6 +447,10 @@ video_output_features = [
             compile_filename='test.m',
             framework_name=['Cocoa', 'IOKit', 'OpenGL'])
     } , {
+        'name': 'gdi',
+        'desc': 'GDI',
+        'func': check_cc(lib='gdi32')
+    } , {
         'name': '--wayland',
         'desc': 'Wayland',
         'func': check_pkg_config('wayland-client', '>= 1.2.0',
@@ -509,6 +513,7 @@ video_output_features = [
     } , {
         'name': '--gl-win32',
         'desc': 'OpenGL Win32 Backend',
+        'deps': [ 'gdi' ],
         'func': check_statement('windows.h', 'wglCreateContext(0)',
                                 lib='opengl32')
     } , {
@@ -570,6 +575,7 @@ video_output_features = [
     }, {
         'name': '--direct3d',
         'desc': 'Direct3D support',
+        'deps': [ 'gdi' ],
         'func': check_cc(header_name='d3d9.h'),
     }
 ]
